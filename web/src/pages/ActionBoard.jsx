@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { useGuild } from '../GuildContext.jsx';
 import { useLive } from '../LiveContext.jsx';
 import ActionViewToggle from '../components/ActionViewToggle.jsx';
+import ColumnOrder from '../components/ColumnOrder.jsx';
 import { Page } from '../components/Page.jsx';
 import { Avatar, Empty, Icon } from '../components/ui.jsx';
 import { buildCanonical, peopleOf, splitAssignees } from '../lib/assignees.js';
@@ -29,6 +30,25 @@ function buildColumns(todos) {
   }
   if (unassigned.length > 0) columns.set(null, unassigned);
   return columns;
+}
+
+function readColumnOrder(key) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(key));
+    return Array.isArray(saved) ? saved.filter((name) => typeof name === 'string' && name.trim()) : [];
+  } catch {
+    return [];
+  }
+}
+
+function orderPeople(columns, preferred) {
+  const names = [...columns.keys()].filter((name) => name !== null);
+  if (preferred.length === 0) return names;
+
+  const canonical = buildCanonical([...names, ...preferred]);
+  const byCanonical = new Map(names.map((name) => [canonical.get(name), name]));
+  const saved = preferred.map((name) => byCanonical.get(canonical.get(name))).filter(Boolean);
+  return [...new Set([...saved, ...names])];
 }
 
 function filterColumns(columns, attendees) {
@@ -155,12 +175,14 @@ function BoardSkeleton() {
 
 function GuildBoard({ guildId }) {
   const { live, latestMeetingAttendees, ready: liveReady, error: liveError } = useLive();
+  const orderKey = `parley-board-column-order:${guildId}`;
   const [todos, setTodos] = useState([]);
   const [loading, setLoading] = useState(Boolean(guildId));
   const [error, setError] = useState(null);
   const [toggleError, setToggleError] = useState(null);
   const [pending, setPending] = useState(new Set());
   const [participantsOnly, setParticipantsOnly] = useState(false);
+  const [preferredOrder, setPreferredOrder] = useState(() => guildId ? readColumnOrder(orderKey) : []);
 
   useEffect(() => {
     if (!guildId) return;
@@ -195,11 +217,21 @@ function GuildBoard({ guildId }) {
     }
   }
 
+  function changeOrder(names) {
+    setPreferredOrder(names);
+    try {
+      if (names.length > 0) localStorage.setItem(orderKey, JSON.stringify(names));
+      else localStorage.removeItem(orderKey);
+    } catch { /* storage can be unavailable */ }
+  }
+
   const allColumns = useMemo(() => buildColumns(todos), [todos]);
+  const orderedPeople = useMemo(() => orderPeople(allColumns, preferredOrder), [allColumns, preferredOrder]);
   const recordings = live.filter((s) => s.phase === 'recording');
   const isRecording = recordings.length > 0;
   const attendees = isRecording ? recordings.flatMap((s) => s.attendees ?? []) : latestMeetingAttendees;
   const columns = participantsOnly ? filterColumns(allColumns, attendees ?? []) : allColumns;
+  const visiblePeople = [...orderedPeople, null].filter((name) => columns.has(name));
   const waitingForParticipants = participantsOnly && !liveReady;
   const participantError = participantsOnly && liveError;
   const now = Date.now();
@@ -238,6 +270,9 @@ function GuildBoard({ guildId }) {
             {participantsOnly && liveReady && !liveError && attendees !== null && (
               <span className="text-xs text-muted">{isRecording ? 'Live recording' : 'Latest meeting'}</span>
             )}
+            {orderedPeople.length > 1 && (
+              <ColumnOrder names={orderedPeople} custom={preferredOrder.length > 0} onChange={changeOrder} />
+            )}
           </div>
         )}
       </header>
@@ -255,8 +290,8 @@ function GuildBoard({ guildId }) {
           <div className="card"><Empty icon={Icon.Columns} title="No action items" body="Action items appear here once meetings are summarized." /></div>
         ) : (
           <div className={TRACK}>
-            {[...columns].map(([name, items]) => (
-              <BoardColumn key={name === null ? 'unassigned' : `person:${name}`} name={name} todos={items}
+            {visiblePeople.map((name) => (
+              <BoardColumn key={name === null ? 'unassigned' : `person:${name}`} name={name} todos={columns.get(name)}
                 now={now} starts={starts} pending={pending} onToggle={toggle} />
             ))}
           </div>
