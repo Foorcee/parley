@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS todos (
   assignee TEXT,
   task TEXT NOT NULL,
   done INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  done_at TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS todos_dedup ON todos(meeting_id, COALESCE(assignee, ''), task);
 CREATE INDEX IF NOT EXISTS utterances_meeting ON utterances(meeting_id);
@@ -106,6 +107,11 @@ export function openDb(path) {
   const summaryCols = sql.prepare(`PRAGMA table_info(summaries)`).all();
   if (!summaryCols.some((c) => c.name === 'timings_json')) {
     sql.exec(`ALTER TABLE summaries ADD COLUMN timings_json TEXT`);
+  }
+  // Legacy resolved items have no recorded completion time.
+  const todoCols = sql.prepare(`PRAGMA table_info(todos)`).all();
+  if (!todoCols.some((c) => c.name === 'done_at')) {
+    sql.exec(`ALTER TABLE todos ADD COLUMN done_at TEXT`);
   }
 
   return {
@@ -168,23 +174,23 @@ export function openDb(path) {
     },
     // Atomically swap a meeting's summary + seeded todos for a freshly generated
     // one. Action items that survive the regeneration (same assignee + task)
-    // keep their done state, so re-running the summary doesn't silently re-open
-    // work people already ticked off. Returns the number of todos seeded.
+    // keep their done state and original completion time. Returns the number of todos seeded.
     replaceSummary(meetingId, guildId, notes, talktime, modelUsed, todoCreatedAt) {
       const key = (assignee, task) => `${assignee ?? ''}\u0000${task}`;
       sql.exec('BEGIN');
       try {
-        const doneKeys = new Set(
-          sql.prepare(`SELECT assignee, task FROM todos WHERE meeting_id = ? AND done = 1`).all(meetingId)
-            .map((t) => key(t.assignee, t.task))
+        const completed = new Map(
+          sql.prepare(`SELECT assignee, task, done_at FROM todos WHERE meeting_id = ? AND done = 1`).all(meetingId)
+            .map((t) => [key(t.assignee, t.task), t.done_at])
         );
         this.clearSummary(meetingId);
         this.saveSummary(meetingId, notes, talktime, modelUsed);
         const n = this.seedTodos(meetingId, guildId, notes.actionItems || [], todoCreatedAt);
-        if (doneKeys.size) {
-          const mark = sql.prepare(`UPDATE todos SET done = 1 WHERE id = ?`);
+        if (completed.size) {
+          const mark = sql.prepare(`UPDATE todos SET done = 1, done_at = ? WHERE id = ?`);
           for (const t of sql.prepare(`SELECT id, assignee, task FROM todos WHERE meeting_id = ?`).all(meetingId)) {
-            if (doneKeys.has(key(t.assignee, t.task))) mark.run(t.id);
+            const todoKey = key(t.assignee, t.task);
+            if (completed.has(todoKey)) mark.run(completed.get(todoKey), t.id);
           }
         }
         sql.exec('COMMIT');
@@ -216,6 +222,12 @@ export function openDb(path) {
     },
     listAttendees(meetingId) {
       return sql.prepare(`SELECT * FROM attendees WHERE meeting_id = ?`).all(meetingId);
+    },
+    latestMeetingAttendees(guildId) {
+      const meeting = sql.prepare(
+        `SELECT id FROM meetings WHERE guild_id = ? AND status <> 'recording' ORDER BY id DESC LIMIT 1`
+      ).get(guildId);
+      return meeting ? this.listAttendees(meeting.id) : null;
     },
     addUtterance({ meetingId, userId, displayName, startMs, endMs, text }) {
       sql.prepare(`INSERT INTO utterances (meeting_id, user_id, display_name, start_ms, end_ms, text)
@@ -307,7 +319,13 @@ export function openDb(path) {
       ).all(guildId);
     },
     setTodoDone(id, done) {
-      sql.prepare(`UPDATE todos SET done = ? WHERE id = ?`).run(done ? 1 : 0, id);
+      return sql.prepare(
+        `UPDATE todos
+         SET done = :done,
+             done_at = CASE WHEN :done = 0 THEN NULL WHEN done = 0 THEN :now ELSE done_at END
+         WHERE id = :id
+         RETURNING done, done_at`
+      ).get({ id, done: done ? 1 : 0, now: new Date().toISOString() });
     },
     listGuilds() {
       return sql.prepare(

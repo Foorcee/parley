@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { useGuild } from './GuildContext.jsx';
 
 const Ctx = createContext(null);
+const NO_SESSIONS = [];
 export const useLive = () => useContext(Ctx);
 
 // Polls the bot's in-progress recordings for the active guild. Live recording
@@ -13,25 +14,33 @@ export const useLive = () => useContext(Ctx);
 // (refreshing immediately on return) — D5.
 export function LiveProvider({ children }) {
   const { guildId } = useGuild();
-  const [live, setLive] = useState([]);
-  const [error, setError] = useState(null);
+  const [snapshot, setSnapshot] = useState(null);
+  const active = useRef(null);
   const timer = useRef(null);
 
   const refresh = useCallback(async () => {
-    if (!guildId) { setLive([]); return; }
+    const scope = active.current;
+    if (!guildId || scope?.guildId !== guildId) return;
+    const sequence = ++scope.sequence;
+    const save = (data) => {
+      if (active.current !== scope || sequence <= scope.applied) return;
+      scope.applied = sequence;
+      setSnapshot({ guildId, ...data });
+    };
     try {
-      const { live } = await api.live(guildId);
-      setLive(Array.isArray(live) ? live : []);
-      setError(null);
+      const { live, latestMeetingAttendees } = await api.live(guildId);
+      save({ live: Array.isArray(live) ? live : NO_SESSIONS, latestMeetingAttendees, error: null });
     } catch (e) {
       // A read-only/standalone server (401) or an older server without the live
       // endpoint (404) has no live data — treat as "nothing recording" rather
       // than surfacing an error. Only real failures show a message.
-      setLive([]);
-      if (e?.status === 401 || e?.status === 404) setError(null);
-      else setError(e?.message || null);
+      const error = e?.status === 401 || e?.status === 404 ? null : (e?.message || 'Failed to load live meetings');
+      save({ live: NO_SESSIONS, latestMeetingAttendees: null, error });
     }
   }, [guildId]);
+
+  const current = snapshot?.guildId === guildId ? snapshot : null;
+  const live = current?.live ?? NO_SESSIONS;
 
   // Poll faster while anything is actively processing (completion should feel
   // snappy), slower otherwise. The interval is recreated whenever this rate
@@ -39,8 +48,10 @@ export function LiveProvider({ children }) {
   const pollMs = live.some((s) => s.phase === 'processing') ? 2000 : 4000;
 
   useEffect(() => {
+    active.current = { guildId, sequence: 0, applied: 0 };
     refresh();
-  }, [refresh]);
+    return () => { active.current = null; };
+  }, [guildId, refresh]);
 
   useEffect(() => {
     function start() {
@@ -67,7 +78,8 @@ export function LiveProvider({ children }) {
   }, [guildId, refresh]);
 
   return (
-    <Ctx.Provider value={{ live, error, refresh, stop }}>
+    <Ctx.Provider value={{ live, latestMeetingAttendees: current?.latestMeetingAttendees ?? null,
+      ready: current !== null, error: current?.error ?? null, refresh, stop }}>
       {children}
     </Ctx.Provider>
   );

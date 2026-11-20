@@ -65,11 +65,17 @@ test('GET /api/guilds and meetings and todos', async () => {
     assert.equal(meetings.length, 1);
     const todos = await (await fetch(`${base}/api/guilds/g1/todos`)).json();
     assert.equal(todos.length, 1);
+    assert.equal(todos[0].done_at, null);
     const patch = await fetch(`${base}/api/todos/${todos[0].id}`, {
       method: 'PATCH', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ done: true }),
     });
     assert.equal(patch.status, 200);
+    const saved = await patch.json();
+    assert.equal(saved.done, 1);
+    assert.match(saved.done_at, /Z$/);
+    const resolved = await (await fetch(`${base}/api/guilds/g1/todos`)).json();
+    assert.equal(resolved[0].done_at, saved.done_at);
     assert.equal((await (await fetch(`${base}/api/guilds/g1/todos?open=1`)).json()).length, 0);
   } finally { close(); }
 });

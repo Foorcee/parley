@@ -227,11 +227,14 @@ for (const m of meetings) {
   const tt = talktime(m.talk.map(([h, ms]) => ({ name: cast[h].name, ms })));
   db.saveSummary(id, m.notes, tt, 'gemini:gemini-2.5-flash', endedAt);
   db.setMeetingStatus(id, 'done', endedAt);
-  const n = db.seedTodos(id, GUILD, m.notes.actionItems, endedAt);
+  db.seedTodos(id, GUILD, m.notes.actionItems, endedAt);
   // Mark the first `doneTodos` as completed for a realistic open/closed mix.
   const todoRows = db.sql.prepare(`SELECT id FROM todos WHERE meeting_id = ? ORDER BY id`).all(id);
+  const markDone = db.sql.prepare(`UPDATE todos SET done = 1, done_at = ? WHERE id = ?`);
+  const meetingEnd = new Date(endedAt.replace(' ', 'T')).getTime();
   for (let i = 0; i < Math.min(m.doneTodos || 0, todoRows.length); i++) {
-    db.sql.prepare(`UPDATE todos SET done = 1 WHERE id = ?`).run(todoRows[i].id);
+    const resolvedAt = Math.min(Date.now(), meetingEnd + (i + 1) * 6 * 60 * 60 * 1000);
+    markDone.run(new Date(resolvedAt).toISOString(), todoRows[i].id);
   }
   created++;
 }

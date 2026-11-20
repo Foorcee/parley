@@ -63,9 +63,8 @@ export function apiRouter({ db, bot = null, client = null, sidecar = null }) {
         const channel = c?.guilds?.cache?.get(s.guildId)?.channels?.cache?.get(s.channelId);
         if (channel?.members) {
           // Prefer the live voice-channel roster (people who joined mid-meeting).
-          const live = [...channel.members.values()].filter((m) => !m.user?.bot)
+          attendees = [...channel.members.values()].filter((m) => !m.user?.bot)
             .map((m) => ({ id: m.id, displayName: m.displayName }));
-          if (live.length) attendees = live;
         }
       }
       return { ...s, attendees };
@@ -89,7 +88,13 @@ export function apiRouter({ db, bot = null, client = null, sidecar = null }) {
   // voice members (live attendees) when a Discord client is connected. The bot
   // holds active sessions in memory, so this is empty unless the bot is running.
   r.get('/guilds/:g/live', (req, res) => {
-    res.json({ live: liveMeetings(req.params.g) });
+    const guildId = req.params.g;
+    const live = liveMeetings(guildId);
+    const latestMeetingAttendees = live.some((s) => s.phase === 'recording') ? null : db.latestMeetingAttendees(guildId);
+    res.json({
+      live,
+      latestMeetingAttendees: latestMeetingAttendees?.map((a) => ({ id: a.user_id, displayName: a.display_name })) ?? null,
+    });
   });
 
   // Stop a live recording from the dashboard. Finalizes the meeting (transcribe
@@ -275,8 +280,8 @@ export function apiRouter({ db, bot = null, client = null, sidecar = null }) {
   });
 
   r.patch('/todos/:id', requireAdmin, (req, res) => {
-    db.setTodoDone(Number(req.params.id), !!req.body.done);
-    res.json({ ok: true });
+    const todo = db.setTodoDone(Number(req.params.id), !!req.body.done);
+    res.json({ ok: true, ...todo });
   });
 
   r.get('/guilds/:g/search', (req, res) => {

@@ -2,31 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useGuild } from '../GuildContext.jsx';
+import ActionViewToggle from '../components/ActionViewToggle.jsx';
 import { Page, PageHead } from '../components/Page.jsx';
 import { Avatar, Icon, Empty } from '../components/ui.jsx';
+import { splitAssignees, buildCanonical, peopleOf } from '../lib/assignees.js';
 import { fmtDateShort } from '../lib/format.js';
 
 const ALL = Symbol('all');
-
-/* The summarizer stores compound assignees ("Devin, Vineel") and name variants
-   ("Devin" vs "Devin Robinson"). Split + canonicalize by word-prefix folding. */
-function splitAssignees(s) {
-  if (s == null) return [];
-  return s.split(',').map((x) => x.trim()).filter(Boolean);
-}
-function buildCanonical(names) {
-  const uniq = [...new Set(names)];
-  const longestFirst = [...uniq].sort((a, b) => b.length - a.length);
-  const map = new Map();
-  for (const n of uniq) {
-    const nl = n.toLowerCase();
-    map.set(n, longestFirst.find((c) => { const cl = c.toLowerCase(); return cl === nl || cl.startsWith(nl + ' '); }) || n);
-  }
-  return map;
-}
-function peopleOf(todo, canon) {
-  return [...new Set(splitAssignees(todo.assignee).map((n) => canon.get(n) || n))];
-}
 
 function TodoRow({ todo, onToggle, people }) {
   const [busy, setBusy] = useState(false);
@@ -107,7 +89,12 @@ export default function ActionItems() {
     return peopleOf(t, canon).includes(person);
   }), [todos, person, canon]);
 
-  if (!guildId) return <Page><Empty icon={Icon.CheckSquare} title="No server selected" /></Page>;
+  if (!guildId) return (
+    <Page max="900px">
+      <PageHead title="Action items" actions={<ActionViewToggle />} />
+      <Empty icon={Icon.CheckSquare} title="No server selected" />
+    </Page>
+  );
 
   const openCount = todos.filter((t) => !t.done).length;
 
@@ -117,10 +104,13 @@ export default function ActionItems() {
         title="Action items"
         subtitle={`${openCount} open across ${people.length} ${people.length === 1 ? 'person' : 'people'}`}
         actions={
-          <label className="flex items-center gap-2 text-sm text-muted cursor-pointer select-none">
-            <input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} className="pcheck h-4 w-4" />
-            Show completed
-          </label>
+          <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center sm:gap-4">
+            <label className="flex items-center gap-2 text-sm text-muted cursor-pointer select-none">
+              <input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} className="pcheck h-4 w-4" />
+              Show completed
+            </label>
+            <ActionViewToggle />
+          </div>
         }
       />
 

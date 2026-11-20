@@ -12,6 +12,7 @@ import Live from './pages/Live.jsx';
 import Meetings from './pages/Meetings.jsx';
 import Reading from './pages/Reading.jsx';
 import ActionItems from './pages/ActionItems.jsx';
+import ActionBoard from './pages/ActionBoard.jsx';
 import Analytics from './pages/Analytics.jsx';
 import Search from './pages/Search.jsx';
 import Commands from './pages/Commands.jsx';
@@ -46,6 +47,7 @@ function Shell() {
               <Route path="/meetings" element={<Meetings />} />
               <Route path="/meetings/:id" element={<Reading />} />
               <Route path="/action-items" element={<ActionItems />} />
+              <Route path="/action-items/board" element={<ActionBoard />} />
               <Route path="/analytics" element={<Analytics />} />
               <Route path="/search" element={<Search />} />
               <Route path="/commands" element={<Commands />} />

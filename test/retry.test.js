@@ -127,6 +127,7 @@ test('POST /api/meetings/:id/retry re-summarizes and returns done', async () => 
   const db = openDb(':memory:');
   const id = db.createMeeting({ guildId: 'g1', channelId: 'c', channelName: 'gen', startedAt: 'now' });
   db.addUtterance({ meetingId: id, userId: 'u', displayName: 'Al', startMs: 0, endMs: 5, text: 'ship on friday' });
+  db.setTranscriptionComplete(id, true);
   db.setMeetingStatus(id, 'summary_failed');
   db.sql.prepare(`INSERT INTO guild_config (guild_id, summarizer_provider) VALUES ('g1', 'fake')`).run();
 

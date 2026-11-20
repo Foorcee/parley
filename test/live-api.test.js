@@ -72,8 +72,9 @@ test('live endpoints degrade gracefully with no bot attached', async () => {
   const db = openDb(':memory:');
   const { base, close } = await listen(appWith(db, null));
   try {
-    const { live } = await (await fetch(`${base}/api/guilds/g1/live`)).json();
+    const { live, latestMeetingAttendees } = await (await fetch(`${base}/api/guilds/g1/live`)).json();
     assert.deepEqual(live, []);
+    assert.equal(latestMeetingAttendees, null);
     const stop = await fetch(`${base}/api/guilds/g1/live/c1/stop`, { method: 'POST' });
     assert.equal(stop.status, 400); // not managed here
   } finally { close(); }
@@ -85,11 +86,16 @@ test('phase passes through; processing entries skip the live roster override', a
   db.addAttendee(rec, 'u1', 'Alice');
   const proc = db.createMeeting({ guildId: 'g1', channelId: 'c2', channelName: 'retro', startedAt: 'now' });
   db.addAttendee(proc, 'u2', 'Bob');
+  db.setMeetingStatus(proc, 'processing');
   // Both channels have live voice members named Zoe — only the recording
   // session may use that roster; the processing one keeps stored attendees.
+  const recordingMembers = new Map([
+    ['z', { id: 'z', displayName: 'Zoe', user: { bot: false } }],
+    ['bot', { id: 'bot', displayName: 'Parley', user: { bot: true } }],
+  ]);
   const client = {
     guilds: { cache: new Map([['g1', { channels: { cache: new Map([
-      ['c1', { members: new Map([['z', { id: 'z', displayName: 'Zoe', user: { bot: false } }]]) }],
+      ['c1', { members: recordingMembers }],
       ['c2', { members: new Map([['z', { id: 'z', displayName: 'Zoe', user: { bot: false } }]]) }],
     ]) } }]]) },
   };
@@ -99,8 +105,9 @@ test('phase passes through; processing entries skip the live roster override', a
   ], client);
   const { base, close } = await listen(appWith(db, bot));
   try {
-    const { live } = await (await fetch(`${base}/api/guilds/g1/live`)).json();
+    const { live, latestMeetingAttendees } = await (await fetch(`${base}/api/guilds/g1/live`)).json();
     assert.equal(live.length, 2);
+    assert.equal(latestMeetingAttendees, null);
     const recording = live.find((s) => s.phase === 'recording');
     const processing = live.find((s) => s.phase === 'processing');
     // Recording: live voice-channel roster wins.
@@ -108,5 +115,34 @@ test('phase passes through; processing entries skip the live roster override', a
     // Processing: bot already left the channel — stored attendees, stoppedAt kept.
     assert.deepEqual(processing.attendees.map((a) => a.displayName), ['Bob']);
     assert.equal(processing.stoppedAt, '2026-07-03T09:30:00Z');
+
+    recordingMembers.delete('z');
+    const emptyRoom = await (await fetch(`${base}/api/guilds/g1/live`)).json();
+    assert.deepEqual(emptyRoom.live.find((s) => s.phase === 'recording').attendees, []);
+
+    bot._sessions = bot._sessions.filter((s) => s.phase === 'processing');
+    const stopped = await (await fetch(`${base}/api/guilds/g1/live`)).json();
+    assert.deepEqual(stopped.latestMeetingAttendees, [{ id: 'u2', displayName: 'Bob' }]);
+  } finally { close(); }
+});
+
+test('live roster falls back to the latest stopped meeting in the selected guild', async () => {
+  const db = openDb(':memory:');
+  const older = db.createMeeting({ guildId: 'g1', channelId: 'c1', startedAt: '2026-07-01T09:00:00Z' });
+  db.addAttendee(older, 'u1', 'Alice');
+  db.setMeetingStatus(older, 'done');
+  const latest = db.createMeeting({ guildId: 'g1', channelId: 'c1', startedAt: '2026-07-02T09:00:00Z' });
+  db.addAttendee(latest, 'u2', 'Bob');
+  db.setMeetingStatus(latest, 'done');
+  db.createMeeting({ guildId: 'g1', channelId: 'c1', startedAt: '2026-07-03T09:00:00Z' });
+  const other = db.createMeeting({ guildId: 'g2', channelId: 'c2', startedAt: '2026-07-03T10:00:00Z' });
+  db.addAttendee(other, 'u3', 'Charlie');
+  db.setMeetingStatus(other, 'done');
+
+  const { base, close } = await listen(appWith(db, null));
+  try {
+    const { live, latestMeetingAttendees } = await (await fetch(`${base}/api/guilds/g1/live`)).json();
+    assert.deepEqual(live, []);
+    assert.deepEqual(latestMeetingAttendees, [{ id: 'u2', displayName: 'Bob' }]);
   } finally { close(); }
 });
