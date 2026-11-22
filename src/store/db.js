@@ -327,6 +327,55 @@ export function openDb(path) {
          RETURNING done, done_at`
       ).get({ id, done: done ? 1 : 0, now: new Date().toISOString() });
     },
+    // Rewrite one action item in the meeting's stored summary so it stays in
+    // sync with a todo edit/delete. Without this, the meeting page would show
+    // stale text and backfillTodos() would re-seed the original item on the
+    // next server start. `replacement` null removes the item.
+    _patchSummaryActionItem(meetingId, assignee, task, replacement) {
+      const row = sql.prepare(`SELECT notes_json FROM summaries WHERE meeting_id = ?`).get(meetingId);
+      if (!row) return;
+      const notes = JSON.parse(row.notes_json);
+      const items = Array.isArray(notes.actionItems) ? notes.actionItems : [];
+      const idx = items.findIndex((a) => a && a.task === task && (a.assignee ?? null) === (assignee ?? null));
+      if (idx === -1) return;
+      if (replacement === null) items.splice(idx, 1);
+      else items[idx] = { ...items[idx], ...replacement };
+      notes.actionItems = items;
+      sql.prepare(`UPDATE summaries SET notes_json = ? WHERE meeting_id = ?`).run(JSON.stringify(notes), meetingId);
+    },
+    // Edit a todo's text. Returns the updated row, null if it doesn't exist.
+    // Throws (SQLite UNIQUE) if the meeting already has the same task for the
+    // same assignee.
+    updateTodoTask(id, task) {
+      sql.exec('BEGIN');
+      try {
+        const todo = sql.prepare(`SELECT * FROM todos WHERE id = ?`).get(id);
+        if (!todo) { sql.exec('ROLLBACK'); return null; }
+        const updated = sql.prepare(`UPDATE todos SET task = ? WHERE id = ? RETURNING *`).get(task, id);
+        if (todo.task !== task) this._patchSummaryActionItem(todo.meeting_id, todo.assignee, todo.task, { task });
+        sql.exec('COMMIT');
+        return updated;
+      } catch (e) {
+        sql.exec('ROLLBACK');
+        throw e;
+      }
+    },
+    // Delete a todo (and its entry in the meeting summary). Returns true if a
+    // row was removed.
+    deleteTodo(id) {
+      sql.exec('BEGIN');
+      try {
+        const todo = sql.prepare(`SELECT * FROM todos WHERE id = ?`).get(id);
+        if (!todo) { sql.exec('ROLLBACK'); return false; }
+        sql.prepare(`DELETE FROM todos WHERE id = ?`).run(id);
+        this._patchSummaryActionItem(todo.meeting_id, todo.assignee, todo.task, null);
+        sql.exec('COMMIT');
+        return true;
+      } catch (e) {
+        sql.exec('ROLLBACK');
+        throw e;
+      }
+    },
     listGuilds() {
       return sql.prepare(
         `SELECT guild_id FROM meetings WHERE guild_id IS NOT NULL

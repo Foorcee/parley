@@ -25,6 +25,7 @@ export const Icon = {
   ArrowUpRight: (p) => <I {...p}><path d="M7 17 17 7M8 7h9v9" /></I>,
   Chevron: (p) => <I {...p}><path d="m9 6 6 6-6 6" /></I>,
   Dots: (p) => <I {...p}><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></I>,
+  Pencil: (p) => <I {...p}><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" /><path d="m14.5 5.5 3 3" /></I>,
   Trash: (p) => <I {...p}><path d="M4 7h16M9 7V4.5h6V7M6 7l1 13h10l1-13" /></I>,
   Download: (p) => <I {...p}><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5V17" /></I>,
   Menu: (p) => <I {...p}><path d="M4 6h16M4 12h16M4 18h16" /></I>,

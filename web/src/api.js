@@ -50,6 +50,8 @@ export const api = {
   assignees: (g) => fetch(`/api/guilds/${g}/assignees`).then(json),
   ask: (g, id, question) => fetch(`/api/guilds/${g}/meetings/${id}/ask`, jsonBody('POST', { question })).then(json),
   setTodoDone: (id, done) => fetch(`/api/todos/${id}`, jsonBody('PATCH', { done })).then(json),
+  setTodoTask: (id, task) => fetch(`/api/todos/${id}`, jsonBody('PATCH', { task })).then(json),
+  deleteTodo: (id) => fetch(`/api/todos/${id}`, { method: 'DELETE' }).then(json),
   deleteMeeting: (id) => fetch(`/api/meetings/${id}`, { method: 'DELETE' }).then(json),
   mergeMeetings: (id, sourceIds) => fetch(`/api/meetings/${id}/merge`, jsonBody('POST', { sourceIds })).then(json),
   search: (g, q) => fetch(`/api/guilds/${g}/search?q=${encodeURIComponent(q)}`).then(json),

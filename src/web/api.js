@@ -279,9 +279,35 @@ export function apiRouter({ db, bot = null, client = null, sidecar = null }) {
     res.json(db.listAssignees(req.params.g));
   });
 
+  // Body: { done?: boolean, task?: string } — either or both.
   r.patch('/todos/:id', requireAdmin, (req, res) => {
-    const todo = db.setTodoDone(Number(req.params.id), !!req.body.done);
-    res.json({ ok: true, ...todo });
+    const id = Number(req.params.id);
+    const body = req.body || {};
+    let result = {};
+    if (body.task !== undefined) {
+      const task = typeof body.task === 'string' ? body.task.trim() : '';
+      if (!task) return res.status(400).json({ error: 'Task text is required' });
+      if (task.length > 2000) return res.status(400).json({ error: 'Task text is too long' });
+      let updated;
+      try { updated = db.updateTodoTask(id, task); }
+      catch (e) {
+        if (/UNIQUE/i.test(e.message)) return res.status(409).json({ error: 'That meeting already has this action item' });
+        throw e;
+      }
+      if (!updated) return res.status(404).json({ error: 'Action item not found' });
+      result = updated;
+    }
+    if (body.done !== undefined) {
+      const todo = db.setTodoDone(id, !!body.done);
+      if (!todo) return res.status(404).json({ error: 'Action item not found' });
+      result = { ...result, ...todo };
+    }
+    res.json({ ok: true, ...result });
+  });
+
+  r.delete('/todos/:id', requireAdmin, (req, res) => {
+    if (!db.deleteTodo(Number(req.params.id))) return res.status(404).json({ error: 'Action item not found' });
+    res.json({ ok: true });
   });
 
   r.get('/guilds/:g/search', (req, res) => {

@@ -10,15 +10,46 @@ import { fmtDateShort } from '../lib/format.js';
 
 const ALL = Symbol('all');
 
-function TodoRow({ todo, onToggle, people }) {
+function TodoRow({ todo, onToggle, onEdit, onDelete, people }) {
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(todo.task);
   const done = Boolean(todo.done);
-  async function change() { if (busy) return; setBusy(true); try { await onToggle(todo); } finally { setBusy(false); } }
+  async function run(fn) { if (busy) return false; setBusy(true); try { return await fn(); } finally { setBusy(false); } }
+  const change = () => run(() => onToggle(todo));
+  function startEdit() { setDraft(todo.task); setEditing(true); }
+  async function save() {
+    const text = draft.trim();
+    if (!text || text === todo.task) { setEditing(false); return; }
+    if (await run(() => onEdit(todo, text))) setEditing(false);
+  }
+  function remove() {
+    if (!window.confirm(`Delete this action item?\n\n“${todo.task}”\n\nIt is also removed from the meeting notes.`)) return;
+    run(() => onDelete(todo));
+  }
+  function onKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save(); }
+    else if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+  }
+  const iconBtn = 'h-7 w-7 grid place-items-center rounded-sm text-muted transition-colors disabled:opacity-40';
   return (
     <li className="flex items-start gap-3 px-4 py-3 hover:bg-surface-2 transition-colors group">
-      <input type="checkbox" checked={done} onChange={change} disabled={busy} className="pcheck mt-0.5" aria-label={todo.task} />
+      <input type="checkbox" checked={done} onChange={change} disabled={busy || editing} className="pcheck mt-0.5" aria-label={todo.task} />
       <div className="min-w-0 flex-1">
-        <span className={`text-[14px] leading-relaxed block ${done ? 'line-through text-muted' : 'text-ink'}`}>{todo.task}</span>
+        {editing ? (
+          <div>
+            <textarea value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey} autoFocus disabled={busy}
+              rows={Math.min(6, Math.max(2, Math.ceil(draft.length / 80)))} aria-label="Action item text"
+              className="input text-[14px] leading-relaxed resize-y" />
+            <div className="flex items-center gap-2 mt-2">
+              <button onClick={save} disabled={busy || !draft.trim()} className="btn btn-primary !py-1.5">Save</button>
+              <button onClick={() => setEditing(false)} disabled={busy} className="btn btn-ghost !py-1.5">Cancel</button>
+              <span className="text-xs text-faint hidden sm:inline">Enter to save · Esc to cancel</span>
+            </div>
+          </div>
+        ) : (
+          <span className={`text-[14px] leading-relaxed block ${done ? 'line-through text-muted' : 'text-ink'}`}>{todo.task}</span>
+        )}
         <div className="flex items-center gap-2 mt-1 flex-wrap">
           {people.length > 0 ? people.map((p) => (
             <span key={p} className="inline-flex items-center gap-1.5 chip"><Avatar name={p} size={15} />{p}</span>
@@ -29,6 +60,18 @@ function TodoRow({ todo, onToggle, people }) {
           </Link>
         </div>
       </div>
+      {!editing && (
+        <div className="flex items-center gap-0.5 shrink-0 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 transition-opacity">
+          <button onClick={startEdit} disabled={busy} title="Edit text" aria-label={`Edit action item: ${todo.task}`}
+            className={`${iconBtn} hover:text-ink hover:bg-surface-3`}>
+            <Icon.Pencil width={15} height={15} />
+          </button>
+          <button onClick={remove} disabled={busy} title="Delete" aria-label={`Delete action item: ${todo.task}`}
+            className={`${iconBtn} hover:text-error hover:bg-error-soft`}>
+            <Icon.Trash width={15} height={15} />
+          </button>
+        </div>
+      )}
     </li>
   );
 }
@@ -63,9 +106,29 @@ export default function ActionItems() {
     return () => { stale = true; };
   }, [guildId, showDone, version]);
 
+  const failMsg = (e, fallback) => (e?.status === 403 ? 'Only admins can edit action items.' : (e?.message || fallback));
+
   async function toggle(t) {
     try { await api.setTodoDone(t.id, !t.done); setVersion((v) => v + 1); setToggleErr(null); }
-    catch (e) { setToggleErr(e?.status === 403 ? 'Only admins can edit action items.' : (e?.message || 'Could not update')); }
+    catch (e) { setToggleErr(failMsg(e, 'Could not update')); }
+  }
+
+  // Returns true on success so the row can leave edit mode.
+  async function editTask(t, task) {
+    try {
+      await api.setTodoTask(t.id, task);
+      setTodos((prev) => prev.map((x) => (x.id === t.id ? { ...x, task } : x)));
+      setToggleErr(null);
+      return true;
+    } catch (e) { setToggleErr(failMsg(e, 'Could not save')); return false; }
+  }
+
+  async function removeTodo(t) {
+    try {
+      await api.deleteTodo(t.id);
+      setTodos((prev) => prev.filter((x) => x.id !== t.id));
+      setToggleErr(null);
+    } catch (e) { setToggleErr(failMsg(e, 'Could not delete')); }
   }
 
   const { canon, people, hasUnassigned } = useMemo(() => {
@@ -138,7 +201,7 @@ export default function ActionItems() {
           <div className="card"><Empty icon={Icon.Check} title={showDone ? 'No action items' : 'All caught up'} body={showDone ? 'Action items appear here once meetings are summarized.' : 'No open tasks in this view.'} /></div>
         ) : (
           <ul className="card p-1 divide-y divide-border">
-            {visible.map((t) => <TodoRow key={t.id} todo={t} onToggle={toggle} people={peopleOf(t, canon)} />)}
+            {visible.map((t) => <TodoRow key={t.id} todo={t} onToggle={toggle} onEdit={editTask} onDelete={removeTodo} people={peopleOf(t, canon)} />)}
           </ul>
         )}
     </Page>
